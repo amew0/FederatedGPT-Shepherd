@@ -85,6 +85,8 @@ python main.py --global_model 'chavinlo/alpaca-native'\
       --num_clients  10 \
       --train_on_inputs \
       --group_by_length
+
+python main.py --global_model 'chavinlo/alpaca-native' --data_path  "./data"  --output_dir  '/dpc/kunf0007/amine/lora-shepherd-7b/' --num_communication_rounds 10  --num_clients  1  --train_on_inputs  --group_by_length --local_batch_size  32 --local_micro_batch_size 16
 ```
 Within the `main.py` file, the GeneralClient is a Python class serves as a representation of the local client and encompasses five distinct sections that facilitate local training: "prepare_local_dataset," "build_local_trainer," "initiate_local_training," "train," and "terminate_local_training." Each of these sections is easy to comprehend and can be easily customized by adding your own functions to meet specific requirements.
 

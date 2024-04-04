@@ -3,11 +3,11 @@ from typing import List
 from tqdm import tqdm
 import fire
 import torch
-from transformers import LlamaTokenizer, LlamaForCausalLM
+from transformers import LlamaTokenizer, LlamaForCausalLM, AutoModelForCausalLM,  BitsAndBytesConfig
 from peft import (
     LoraConfig,
     get_peft_model,
-    prepare_model_for_int8_training,
+    prepare_model_for_kbit_training,
 )
 from fed_utils import FedAvg, client_selection, global_evaluation, GeneralClient
 import datasets
@@ -73,12 +73,10 @@ def fl_finetune(
             f"resume_from_checkpoint: {resume_from_checkpoint or False}\n"
             f"prompt template: {prompt_template_name}\n"
         )
-    assert (
-        global_model
-    ), "Please specify a --global_model, e.g. --global_modell='decapoda-research/llama-7b-hf'"
+    assert global_model, "Please specify a --global_model, e.g. --global_modell='decapoda-research/llama-7b-hf'"
 
     data_path = os.path.join(data_path, str(num_clients))
-    assert (os.path.exists(data_path), "Please generate the data files for each client")
+    assert os.path.exists(data_path), "Please generate the data files for each client"
 
     # set up the global model & toknizer
     gradient_accumulation_steps = local_batch_size // local_micro_batch_size
@@ -90,14 +88,23 @@ def fl_finetune(
         device_map = {"": int(os.environ.get("LOCAL_RANK") or 0)}
         gradient_accumulation_steps = gradient_accumulation_steps // world_size
 
-    model = LlamaForCausalLM.from_pretrained(
-        global_model,
-        load_in_8bit=True,
-        torch_dtype=torch.float16,
-        device_map=device_map,
+    # Quantization configuration
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_use_double_quant=True,
     )
 
-    tokenizer = LlamaTokenizer.from_pretrained(global_model)
+    model = AutoModelForCausalLM.from_pretrained(
+        global_model,
+        quantization_config=bnb_config,
+        torch_dtype=torch.float16,
+        device_map={"": 0},
+        cache_dir="/dpc/kunf0007/amine"
+    )
+
+    tokenizer = LlamaTokenizer.from_pretrained(global_model,cache_dir="/dpc/kunf0007/amine")
     tokenizer.pad_token_id = (
         0
     )
@@ -144,7 +151,7 @@ def fl_finetune(
                                                                     ]  # could be sped up, probably
         return tokenized_full_prompt
 
-    model = prepare_model_for_int8_training(model)
+    model = prepare_model_for_kbit_training(model)
     config = LoraConfig(
         r=lora_r,
         lora_alpha=lora_alpha,
