@@ -23,7 +23,7 @@ remaining_df = sorted_df.drop(index=sampled_df.index)
 
 sampled_df = sampled_df.reset_index().drop('index', axis=1)
 remaining_df = remaining_df.reset_index().drop('index', axis=1)
-data_path = os.path.join("data", str(num_clients))
+data_path = os.path.join("data_", str(num_clients))
 
 os.makedirs(data_path,exist_ok=True)
 

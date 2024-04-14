@@ -55,10 +55,10 @@ class GeneralClient:
         self.train_args = transformers.TrainingArguments(
             per_device_train_batch_size=local_micro_batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
-            warmup_steps=0,
+            warmup_steps=10,
             num_train_epochs=local_num_epochs,
             learning_rate=local_learning_rate,
-            fp16=True,
+            fp16=False,
             logging_steps=1,
             optim="adamw_torch",
             evaluation_strategy="steps" if self.local_val_set_size > 0 else "no",

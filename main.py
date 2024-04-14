@@ -27,8 +27,8 @@ def fl_finetune(
         num_communication_rounds: int = 50,
         num_clients: int = 10,
         # Local training hyperparams
-        local_batch_size: int = 64,  # 64,
-        local_micro_batch_size: int = 8,
+        local_batch_size: int = 8,  # 64,
+        local_micro_batch_size: int = 4, # 8,
         local_num_epochs: int = 10,
         local_learning_rate: float = 3e-4,
         local_val_set_size: int = 0,
@@ -42,7 +42,7 @@ def fl_finetune(
             "q_proj",
         ],
         # llm hyperparams
-        train_on_inputs: bool = True,
+        train_on_inputs: bool = False, # True,
         group_by_length: bool = False,
         resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
         prompt_template_name: str = "alpaca",  # The prompt template to use, will default to alpaca.
