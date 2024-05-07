@@ -174,9 +174,9 @@ def fl_finetune(
     for epoch in tqdm(range(num_communication_rounds)):
 
         print("\nConducting the client selection")
-        selected_clients_set = client_selection(num_clients, client_selection_frac, client_selection_strategy,
-                                                other_info=epoch)
-
+        # selected_clients_set = client_selection(num_clients, client_selection_frac, client_selection_strategy,
+        #                                         other_info=epoch)
+        selected_clients_set = ["0"]
         for client_id in selected_clients_set:
             client = GeneralClient(client_id, model, data_path, output_dir)
 
