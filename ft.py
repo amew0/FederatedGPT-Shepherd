@@ -6,10 +6,6 @@ start = time()
 
 import torch
 print(torch.cuda.is_available())
-import os
-from typing import List
-from tqdm import tqdm
-import fire
 import torch
 import transformers
 from transformers import LlamaTokenizer, LlamaForCausalLM, AutoModelForCausalLM,  BitsAndBytesConfig
@@ -27,7 +23,7 @@ datasets.utils.logging.set_verbosity_error()
 
 chavinlo = "chavinlo/alpaca-native"
 ME="/dpc/kunf0007/amine"
-RUN_ID="120524"
+RUN_ID="140524"
 
 chavinlo_tokenizer = LlamaTokenizer.from_pretrained(
     chavinlo,
@@ -49,7 +45,20 @@ chavinlo_model = AutoModelForCausalLM.from_pretrained(
 )
 print(logg("MODELS_LOADED"))
 
-prompter = Prompter('alpaca', verbose=True)
+chavinlo_model = prepare_model_for_kbit_training(chavinlo_model)
+config = LoraConfig(
+    r=16,
+    lora_alpha=16,
+    target_modules= ["q_proj","k_proj","v_proj"],
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM",
+)
+chavinlo_model = get_peft_model(chavinlo_model, config)
+print(logg("LORA'ed"))
+
+
+prompter = Prompter('alpaca', verbose=False)
 
 cutoff_len = 512
 def tokenize(prompt, tokenizer, add_eos_token=True):
@@ -103,7 +112,7 @@ def build_local_trainer(
         per_device_train_batch_size=local_micro_batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         warmup_steps=1,
-        num_train_epochs=15,
+        num_train_epochs=30,
         learning_rate=local_learning_rate,
         fp16=False,
         logging_steps=1,
@@ -122,7 +131,7 @@ def build_local_trainer(
     )
     return local_trainer
 
-local_trainer = build_local_trainer()
+model = build_local_trainer()
 
 from collections import OrderedDict
 import copy
@@ -139,26 +148,25 @@ def initiate_local_training(model=chavinlo_model):
         )
     ).__get__(model, type(model))
     return model
-chavinlo_model = initiate_local_training()
+model = initiate_local_training()
 print(logg("INITIATED_LOCAL_TRAINING"))
 
-import gc
-def train():
-
-    gc.collect()
-    gc.collect()
-    local_trainer.train()
-
 print(logg("JUST_BEFORE_TRAIN_CALL"))
-train()
+
+import gc
+
+gc.collect()
+gc.collect()
+model.train()
+
 print(logg("JUST_AFTER_TRAIN_CALL"))
 
 
-def save(model=chavinlo_model, tokenizer=chavinlo_tokenizer):
+def save(model, tokenizer=chavinlo_tokenizer):
     model.save_pretrained(f"{ME}/model/mylora-shepherd-v{RUN_ID}")
     tokenizer.save_pretrained(f"{ME}/model/mylora-shepherd-v{RUN_ID}")
 
-save()
+save(model)
 print(logg("SAVED"))
 
 from huggingface_hub import HfFolder
@@ -166,8 +174,8 @@ from huggingface_hub import HfFolder
 huggingface_token = "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"
 HfFolder.save_token(huggingface_token)
 
-chavinlo_model.push_to_hub(f"mylora-shepherd-v{RUN_ID}")
-chavinlo_tokenizer.push_to_hub(f"mylora-shepherd-v{RUN_ID}")
+model.push_to_hub(f"mylora-shepherd-v{RUN_ID}")
+model.push_to_hub(f"mylora-shepherd-v{RUN_ID}")
 
 print(logg("PUSHED"))
 

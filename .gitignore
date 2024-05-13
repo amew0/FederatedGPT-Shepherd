@@ -3,3 +3,6 @@ data
 data_
 wandb
 **/__pycache__
+
+*.out
+*.err
