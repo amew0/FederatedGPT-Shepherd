@@ -23,7 +23,9 @@ datasets.utils.logging.set_verbosity_error()
 
 chavinlo = "chavinlo/alpaca-native"
 ME="/dpc/kunf0007/amine"
-RUN_ID="140524"
+from datetime import datetime
+RUN_ID = datetime.now().strftime("%y%m%d%H")
+print(logg(RUN_ID))
 
 chavinlo_tokenizer = LlamaTokenizer.from_pretrained(
     chavinlo,
@@ -36,7 +38,7 @@ bnb_config = BitsAndBytesConfig(
     bnb_4bit_compute_dtype=torch.float16,
     bnb_4bit_use_double_quant=True,
 )
-chavinlo_model = AutoModelForCausalLM.from_pretrained(
+model = AutoModelForCausalLM.from_pretrained(
     chavinlo,
     quantization_config=bnb_config,
     torch_dtype=torch.float16,
@@ -45,7 +47,7 @@ chavinlo_model = AutoModelForCausalLM.from_pretrained(
 )
 print(logg("MODELS_LOADED"))
 
-chavinlo_model = prepare_model_for_kbit_training(chavinlo_model)
+model = prepare_model_for_kbit_training(model)
 config = LoraConfig(
     r=16,
     lora_alpha=16,
@@ -54,7 +56,7 @@ config = LoraConfig(
     bias="none",
     task_type="CAUSAL_LM",
 )
-chavinlo_model = get_peft_model(chavinlo_model, config)
+model = get_peft_model(model, config)
 print(logg("LORA'ed"))
 
 
@@ -102,7 +104,7 @@ print(logg("DATA_GENERATED_AND_TOKENIZED"))
 gradient_accumulation_steps = 8 // 4
 def build_local_trainer(
     tokenizer=chavinlo_tokenizer,
-    model=chavinlo_model,
+    model=model,
     local_micro_batch_size=4,
     gradient_accumulation_steps=2,
     local_learning_rate=3e-4,
@@ -135,23 +137,21 @@ model = build_local_trainer()
 
 from collections import OrderedDict
 import copy
-def initiate_local_training(model=chavinlo_model):
-    model.config.use_cache = False
-    params_dict_new = OrderedDict(
-        (name, param.detach())
-        for name, param in model.named_parameters()
-        if "default" in name
-    )
-    model.state_dict = (
-        lambda instance, *_, **__: get_peft_model_state_dict(
-            instance, params_dict_new, "default"
-        )
-    ).__get__(model, type(model))
-    return model
-model = initiate_local_training()
+# def initiate_local_training(model=model):
+#     model.config.use_cache = False
+#     params_dict_new = OrderedDict(
+#         (name, param.detach())
+#         for name, param in model.named_parameters()
+#         if "default" in name
+#     )
+#     model.state_dict = (
+#         lambda instance, *_, **__: get_peft_model_state_dict(
+#             instance, params_dict_new, "default"
+#         )
+#     ).__get__(model, type(model))
+#     return model
+# model = initiate_local_training()
 print(logg("INITIATED_LOCAL_TRAINING"))
-
-print(logg("JUST_BEFORE_TRAIN_CALL"))
 
 import gc
 
