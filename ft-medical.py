@@ -7,9 +7,9 @@ import wandb
 wandb.require('core')
 from datetime import datetime
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from trl import SFTTrainer
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, PeftModel
+from peft import LoraConfig, PeftModel
 from datasets import load_dataset
 from time import time
 
@@ -59,7 +59,7 @@ model = AutoModelForCausalLM.from_pretrained(
 peft_config = LoraConfig(
     r=16,
     lora_alpha=16,
-    target_modules=["k_proj"],
+    target_modules=["q_proj", "k_proj", "v_proj"],
     lora_dropout=0.05,
     bias="none",
     task_type="CAUSAL_LM",
@@ -85,7 +85,7 @@ def generate_and_tokenize_prompt(data_point):
     return tokenized_full_prompt
 
 # Load and process dataset
-data_path = './data/1/medical-1-row.json'
+data_path = './data/1/medical.json'
 output_dir = f'{ME}/output/output_{RUN_ID}'
 data = load_dataset("json", data_files=data_path)
 train_dataset = data["train"].shuffle().map(generate_and_tokenize_prompt)
@@ -93,9 +93,6 @@ train_dataset = data["train"].shuffle().map(generate_and_tokenize_prompt)
 # Build Trainer
 def build_trainer(tokenizer=tokenizer, model=model):
     train_args = transformers.TrainingArguments(
-        # push_to_hub=True,
-        # push_to_hub_model_id=f'l3-8b-medical-v{RUN_ID}',
-        # push_to_hub_token=HF_TOKEN_WRITE,
         per_device_train_batch_size=4,
         gradient_accumulation_steps=2,
         warmup_steps=1,
@@ -106,16 +103,14 @@ def build_trainer(tokenizer=tokenizer, model=model):
         optim="adamw_torch",
         output_dir=output_dir,
         group_by_length=False,
-        dataloader_drop_last=False,
-        
+        dataloader_drop_last=False
     )
     trainer = SFTTrainer(
         model=model,
         tokenizer=tokenizer,
         peft_config=peft_config,
         train_dataset=train_dataset,
-        args=train_args,
-        
+        args=train_args
     )
     return trainer
 
@@ -130,11 +125,10 @@ trainer.train()
 model_save_path = f"{ME}/model/l3-8b-medical-v{RUN_ID}"
 trainer.model.save_pretrained(model_save_path)
 
-
+# saving to load later from https://www.youtube.com/watch?v=Pb_RGAl75VE&ab_channel=DataCamp
 model = AutoModelForCausalLM.from_pretrained(
     name, 
     cache_dir=f"{ME}/l3-8b/model",
-    # quantization_config=bnb_config,
     torch_dtype=torch.float16,
     device_map={"": 0},
     return_dict=True
@@ -150,27 +144,6 @@ tokenizer = AutoTokenizer.from_pretrained(
     legacy=False
 )
 tokenizer.pad_token = tokenizer.eos_token
-
-
-# tokenizer.save_pretrained(model_save_path)
-
-# # Load model for inference
-# # Debug: Print model architecture before loading
-# print("Model architecture before loading:")
-# for name, param in model.named_parameters():
-#     print(f"{name}: {param.shape}")
-
-# ft_model = PeftModel.from_pretrained(model, model_save_path)
-# combined_model = ft_model.merge_and_unload()
-
-# # Debug: Print combined model architecture
-# print("Combined model architecture after merging:")
-# for name, param in combined_model.named_parameters():
-#     print(f"{name}: {param.shape}")
-
-# # Save the combined model
-# combined_model.save_pretrained(model_save_path)
-# tokenizer.save_pretrained(model_save_path)
 
 # Push to Hugging Face Hub
 tokenizer.push_to_hub(f"l3-8b-medical-v{RUN_ID}", token=HF_TOKEN_WRITE)
