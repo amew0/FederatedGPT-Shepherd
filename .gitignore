@@ -8,3 +8,4 @@ wandb
 *.err
 
 .env
+o.txt
