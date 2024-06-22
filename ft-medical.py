@@ -7,11 +7,14 @@ import wandb
 wandb.require('core')
 from datetime import datetime
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from trl import SFTTrainer
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, PeftModel
+from peft import LoraConfig, PeftModel
 from datasets import load_dataset
 from time import time
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+print(os.getenv('PYTORCH_CUDA_ALLOC_CONF'))
 
 start = time()
 
@@ -24,20 +27,16 @@ HF_TOKEN_WRITE = os.getenv("HF_TOKEN_WRITE")
 # Login to Hugging Face Hub
 huggingface_hub.login(token=HF_TOKEN_WRITE)
 
+
+torch.cuda.empty_cache()
+torch.cuda.memory_summary(device=None, abbreviated=False)
+
 # Set model and tokenizer paths
 ME = "/dpc/kunf0097/l3-8b"
 RUN_ID = datetime.now().strftime("%y%m%d%H%M%S")
 
 # Initialize tokenizer
 name = "meta-llama/Meta-Llama-3-8B"
-tokenizer = AutoTokenizer.from_pretrained(
-    name, 
-    cache_dir=f"{ME}/l3-8b/tokenizer", 
-    padding_side="right", 
-    pad_token_id=(0),
-    legacy=False
-)
-tokenizer.pad_token = tokenizer.eos_token
 
 # Initialize model
 bnb_config = BitsAndBytesConfig(
@@ -52,12 +51,23 @@ model = AutoModelForCausalLM.from_pretrained(
     quantization_config=bnb_config,
     torch_dtype=torch.float16,
     device_map={"": 0},
+    low_cpu_mem_usage=True,
     return_dict=True
 )
 
+tokenizer = AutoTokenizer.from_pretrained(
+    name, 
+    cache_dir=f"{ME}/l3-8b/tokenizer", 
+    padding_side="right", 
+    pad_token_id=(0),
+    legacy=False
+)
+tokenizer.pad_token = tokenizer.eos_token
+
+
 # Prepare model for LoRA training
 peft_config = LoraConfig(
-    r=16,
+    r=4,
     lora_alpha=16,
     target_modules=["k_proj"],
     lora_dropout=0.05,
@@ -66,26 +76,32 @@ peft_config = LoraConfig(
 )
 
 # Tokenize prompt function
+cutoff_len=128 # most important hp to control CUDA OOM
 def tokenize(prompt, tokenizer, add_eos_token=True):
     result = tokenizer(
         prompt,
         truncation=True,
-        padding=False,
-        return_tensors=None,
+        max_length=cutoff_len,  # Use the cutoff_len variable you've defined
+        padding="max_length",  # Ensure padding is done to the max_length
+        return_tensors="pt",   # Return PyTorch tensors
     )
-    if result["input_ids"][-1] != tokenizer.eos_token_id and add_eos_token:
-        result["input_ids"].append(tokenizer.eos_token_id)
-        result["attention_mask"].append(1)
+    result["input_ids"] = result["input_ids"].flatten()
+    result["attention_mask"] = result["attention_mask"].flatten()
 
-    result["labels"] = result["input_ids"].copy()
+    if add_eos_token and result["input_ids"].shape[0] < cutoff_len:
+        # Append eos_token_id to each sequence in the batch
+        result["input_ids"][-1] = tokenizer.eos_token_id
+        result["attention_mask"][-1] = 1
+
+    result["labels"] = result["input_ids"].clone()  # Clone input_ids for labels
     return result
 
 def generate_and_tokenize_prompt(data_point):
-    tokenized_full_prompt = tokenize(data_point["prompt"], tokenizer=tokenizer)
+    tokenized_full_prompt = tokenize(data_point["prompt"], tokenizer=tokenizer).to('cuda:1')
     return tokenized_full_prompt
 
 # Load and process dataset
-data_path = './data/1/medical-1-row.json'
+data_path = './data/1/medical.json'
 output_dir = f'{ME}/output/output_{RUN_ID}'
 data = load_dataset("json", data_files=data_path)
 train_dataset = data["train"].shuffle().map(generate_and_tokenize_prompt)
@@ -93,11 +109,9 @@ train_dataset = data["train"].shuffle().map(generate_and_tokenize_prompt)
 # Build Trainer
 def build_trainer(tokenizer=tokenizer, model=model):
     train_args = transformers.TrainingArguments(
-        # push_to_hub=True,
-        # push_to_hub_model_id=f'l3-8b-medical-v{RUN_ID}',
-        # push_to_hub_token=HF_TOKEN_WRITE,
-        per_device_train_batch_size=4,
+        per_device_train_batch_size=2,
         gradient_accumulation_steps=2,
+        eval_accumulation_steps=1, # !very important to send data to cpu
         warmup_steps=1,
         num_train_epochs=1,
         learning_rate=3e-4,
@@ -106,8 +120,7 @@ def build_trainer(tokenizer=tokenizer, model=model):
         optim="adamw_torch",
         output_dir=output_dir,
         group_by_length=False,
-        dataloader_drop_last=False,
-        
+        dataloader_drop_last=False
     )
     trainer = SFTTrainer(
         model=model,
@@ -115,12 +128,11 @@ def build_trainer(tokenizer=tokenizer, model=model):
         peft_config=peft_config,
         train_dataset=train_dataset,
         args=train_args,
-        
+        max_seq_length=cutoff_len,
     )
     return trainer
 
 trainer = build_trainer()
-
 # Train model
 gc.collect()
 gc.collect()
@@ -130,11 +142,10 @@ trainer.train()
 model_save_path = f"{ME}/model/l3-8b-medical-v{RUN_ID}"
 trainer.model.save_pretrained(model_save_path)
 
-
+# saving to load later from https://www.youtube.com/watch?v=Pb_RGAl75VE&ab_channel=DataCamp
 model = AutoModelForCausalLM.from_pretrained(
     name, 
     cache_dir=f"{ME}/l3-8b/model",
-    # quantization_config=bnb_config,
     torch_dtype=torch.float16,
     device_map={"": 0},
     return_dict=True
@@ -150,27 +161,6 @@ tokenizer = AutoTokenizer.from_pretrained(
     legacy=False
 )
 tokenizer.pad_token = tokenizer.eos_token
-
-
-# tokenizer.save_pretrained(model_save_path)
-
-# # Load model for inference
-# # Debug: Print model architecture before loading
-# print("Model architecture before loading:")
-# for name, param in model.named_parameters():
-#     print(f"{name}: {param.shape}")
-
-# ft_model = PeftModel.from_pretrained(model, model_save_path)
-# combined_model = ft_model.merge_and_unload()
-
-# # Debug: Print combined model architecture
-# print("Combined model architecture after merging:")
-# for name, param in combined_model.named_parameters():
-#     print(f"{name}: {param.shape}")
-
-# # Save the combined model
-# combined_model.save_pretrained(model_save_path)
-# tokenizer.save_pretrained(model_save_path)
 
 # Push to Hugging Face Hub
 tokenizer.push_to_hub(f"l3-8b-medical-v{RUN_ID}", token=HF_TOKEN_WRITE)
