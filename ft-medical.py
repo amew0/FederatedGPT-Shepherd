@@ -14,7 +14,6 @@ from datasets import load_dataset
 from time import time
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
-print(os.getenv('PYTORCH_CUDA_ALLOC_CONF'))
 
 start = time()
 
@@ -36,7 +35,7 @@ ME = "/dpc/kunf0097/l3-8b"
 RUN_ID = datetime.now().strftime("%y%m%d%H%M%S")
 
 # Initialize tokenizer
-name = "meta-llama/Meta-Llama-3-8B"
+name = "meta-llama/Meta-Llama-3-8B-Instruct"
 
 # Initialize model
 bnb_config = BitsAndBytesConfig(
@@ -76,7 +75,7 @@ peft_config = LoraConfig(
 )
 
 # Tokenize prompt function
-cutoff_len=128 # most important hp to control CUDA OOM
+cutoff_len=256 # most important hp to control CUDA OOM
 def tokenize(prompt, tokenizer, add_eos_token=True):
     result = tokenizer(
         prompt,
@@ -113,7 +112,7 @@ def build_trainer(tokenizer=tokenizer, model=model):
         gradient_accumulation_steps=2,
         eval_accumulation_steps=1, # !very important to send data to cpu
         warmup_steps=1,
-        num_train_epochs=1,
+        num_train_epochs=4,
         learning_rate=3e-4,
         fp16=False,
         logging_steps=1,
