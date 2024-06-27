@@ -1,3 +1,5 @@
+logg = lambda x: print(f"------------------------ {x} ---------------------------")
+
 import os
 import gc
 import torch
@@ -13,7 +15,13 @@ from peft import LoraConfig, PeftModel
 from datasets import load_dataset
 from time import time
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+cudas = os.getenv('CUDA_VISIBLE_DEVICES')
+if cudas: 
+    gpus = [torch.device(f'cuda:{i}') for i in range(torch.cuda.device_count())] 
+else: gpus = [torch.device('cuda')] 
+
+gpu0, gpu1 = gpus[0], None
+if len(gpus) > 1: gpu1 = gpus[1]
 
 start = time()
 
@@ -33,6 +41,8 @@ torch.cuda.memory_summary(device=None, abbreviated=False)
 # Set model and tokenizer paths
 ME = "/dpc/kunf0097/l3-8b"
 RUN_ID = datetime.now().strftime("%y%m%d%H%M%S")
+logg(RUN_ID)
+logg('ft-medical.py')
 
 # Initialize tokenizer
 name = "meta-llama/Meta-Llama-3-8B-Instruct"
@@ -68,7 +78,7 @@ tokenizer.pad_token = tokenizer.eos_token
 peft_config = LoraConfig(
     r=4,
     lora_alpha=16,
-    target_modules=["q_proj", "k_proj", "v_proj"],
+    target_modules=["q_proj", "o_proj", "k_proj", "v_proj", "gate_proj"],
     lora_dropout=0.05,
     bias="none",
     task_type="CAUSAL_LM",
@@ -96,7 +106,8 @@ def tokenize(prompt, tokenizer, add_eos_token=True):
     return result
 
 def generate_and_tokenize_prompt(data_point):
-    tokenized_full_prompt = tokenize(data_point["prompt"], tokenizer=tokenizer).to('cuda:1')
+    tokenized_full_prompt = tokenize(data_point["prompt"], tokenizer=tokenizer)
+    if gpu1: tokenized_full_prompt.to(gpu1)
     return tokenized_full_prompt
 
 # Load and process dataset
@@ -105,14 +116,18 @@ output_dir = f'{ME}/output/output_{RUN_ID}'
 data = load_dataset("json", data_files=data_path)
 train_dataset = data["train"].shuffle().map(generate_and_tokenize_prompt)
 
+eval_data_path = './data/1/eval_medical_2k.json'
+eval_data = load_dataset("json", data_files=eval_data_path)
+eval_dataset = data["train"].shuffle().map(generate_and_tokenize_prompt)
+
 # Build Trainer
 def build_trainer(tokenizer=tokenizer, model=model):
     train_args = transformers.TrainingArguments(
         per_device_train_batch_size=2,
-        gradient_accumulation_steps=2,
+        gradient_accumulation_steps=4,
         eval_accumulation_steps=1, # !very important to send data to cpu
         warmup_steps=1,
-        num_train_epochs=4,
+        num_train_epochs=10,
         learning_rate=3e-4,
         fp16=False,
         logging_steps=1,
@@ -126,6 +141,7 @@ def build_trainer(tokenizer=tokenizer, model=model):
         tokenizer=tokenizer,
         peft_config=peft_config,
         train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         args=train_args,
         max_seq_length=cutoff_len,
     )
@@ -136,6 +152,10 @@ trainer = build_trainer()
 gc.collect()
 gc.collect()
 trainer.train()
+
+result = trainer.evaluate()
+print("------------------- EVALUATED -------------")
+print(result)
 
 # Save model and tokenizer
 model_save_path = f"{ME}/model/l3-8b-medical-v{RUN_ID}"
