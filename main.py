@@ -145,7 +145,7 @@ def fl_finetune(
             user_prompt_len = len(tokenized_user_prompt["input_ids"])
 
             tokenized_full_prompt["labels"] = [
-                                                  -100
+                                                  -100 # a hf norm so that those corresponding tokens are not considered in the loss computation
                                               ] * user_prompt_len + tokenized_full_prompt["labels"][
                                                                     user_prompt_len:
                                                                     ]  # could be sped up, probably
