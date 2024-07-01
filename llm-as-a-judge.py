@@ -50,7 +50,7 @@ eval_model = AutoModelForCausalLM.from_pretrained(
 
 # %%
 # model to be evaluated
-name = "amew0/l3-8b-medical-v240623023136"
+name = "meta-llama/Meta-Llama-3-8B-Instruct"
 tokenizer = AutoTokenizer.from_pretrained(
     name, 
     cache_dir=f"{ME}/tokenizer", 
@@ -93,7 +93,7 @@ def eval_prompt_tokenizer(generated:str, output:str):
     # we can add the question for context if we fill like
     # [Later] structure (i.e how sentence-structurally the generated output resembled the expected one) and  
     prompt = """<|start_header_id|>system<|end_header_id|>
-You are going to act as an LLM evaluator to rate the answer of the medical chatbot on factualness (i.e how contextually the generated output followed the expected reply). Penalize it appropriately for any hallucination, lost of context, or trailing repetition. YOUR RESPONSE IS NOTHING ELSE BUT A FLOAT FROM 0.0 - 5.0. Where 0.0 indicates the context of the generated response is very far from the expected one. And 5.0 represents otherwise. AGAIN IF YOUR GENERATED ANYTHING ELSE BUT A FLOAT YOU'RE GOING TO CRUSH MY SYSTEM!!<|eot_id|><|start_header_id|>user<|end_header_id|> 
+You are going to act as an LLM evaluator to rate the answer of the medical chatbot on factualness (i.e how contextually the generated output followed the expected reply). Penalize it appropriately for any hallucination, lost of context, or trailing repetition. YOUR RESPONSE IS NOTHING ELSE BUT A FLOAT FROM 0.0 - 5.0 (with format x.x). Where 0.0 indicates the context of the generated response is very far from the expected one. And 5.0 represents otherwise. AGAIN IF YOUR GENERATED ANYTHING ELSE BUT A FLOAT YOU'RE GOING TO CRUSH MY SYSTEM!!<|eot_id|><|start_header_id|>user<|end_header_id|> 
 ### Expected: {}
 ### Generated: {}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
@@ -105,7 +105,7 @@ You are going to act as an LLM evaluator to rate the answer of the medical chatb
 # %%
 import re
 def extract_score(text):
-    match = re.search(r'[-+]?\d*\.\d+|\d+', text)
+    match = re.search(r'\b\d+\.\d+\b', text)
     return float(match.group(0)) if match else -1.0
 
 # %%
@@ -119,8 +119,9 @@ def log2json(res):
         f.flush()
 
 # %%
+from tqdm import tqdm
 results = []
-for i, example in enumerate(eval_dataset):
+for i, example in tqdm(enumerate(eval_dataset)):
     res = None
     example["input_ids"] = torch.LongTensor(example["input_ids"]).to(model.device)
     example["attention_mask"] = torch.LongTensor(example["attention_mask"]).to(model.device)

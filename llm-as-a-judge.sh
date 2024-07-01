@@ -8,7 +8,7 @@
 # SBATCH --mem=80000MB
 #SBATCH --output=./out/%j.out
 #SBATCH --error=./out/%j.err
-#SBATCH --nodelist=gpu-10-4
+# SBATCH --nodelist=gpu-10-4
 
  
 module load miniconda/3
