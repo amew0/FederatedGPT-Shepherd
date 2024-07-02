@@ -26,7 +26,7 @@ def inspectt(frame):
     args, _, _, values = inspect.getargvalues(frame)
     for arg in args:
         print(f"\t{arg}: {values[arg]}")
-    logg("")
+    logg("") 
 
 
 def get_prompts_from_template(filepath, model_name):
