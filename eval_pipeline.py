@@ -124,7 +124,7 @@ def main(
     # sys.exit()
 
     start = time()
-    load_dotenv()
+    # load_dotenv()
     HF_TOKEN_WRITE = os.getenv("HF_TOKEN_WRITE")
     huggingface_hub.login(token=HF_TOKEN_WRITE)
 
@@ -153,7 +153,7 @@ def main(
         "max_new_tokens": 256,
         "eos_token_id": [
             candidate_tokenizer.eos_token_id,
-            candidate_tokenizer.convert_tokens_to_ids("<|eot_id|>"),
+            candidate_tokenizer.convert_tokens_to_ids("<|eot_id|>"), # see what others use... and try to use
         ],
         "do_sample": True,
         "temperature": 0.6,
