@@ -4,7 +4,7 @@ data_
 wandb
 **/__pycache__
 out/
-!out/results_240623023136_240628153415.json
+!out/*.json
 *.out
 *.err
 

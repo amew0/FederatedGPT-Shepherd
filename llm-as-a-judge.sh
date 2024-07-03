@@ -14,4 +14,4 @@
 module load miniconda/3
 conda activate torch20
 echo "Finally - out of queue" 
-python llm-as-a-judge.py
+python eval_pipeline.py --name=microsoft/Phi-3-mini-4k-instruct

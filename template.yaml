@@ -8,7 +8,7 @@ meta-llama/Meta-Llama-3-8B-Instruct:
   chat_prompt: <|start_header_id|>system<|end_header_id|> {}<|eot_id|><|start_header_id|>user<|end_header_id|> {}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
   evaluator_prompt: |
     <|start_header_id|>system<|end_header_id|>
-    You are going to act as an LLM evaluator to rate the answer of the medical chatbot on factualness (i.e how contextually the generated output followed the expected reply). Penalize it appropriately for any hallucination, lost of context, or trailing repetition. YOUR RESPONSE IS NOTHING ELSE BUT A FLOAT FROM 0.0 - 5.0 (with format x.x). Where 0.0 indicates the context of the generated response is very far from the expected one. And 5.0 represents otherwise. AGAIN IF YOUR GENERATED ANYTHING ELSE BUT A FLOAT YOU'RE GOING TO CRUSH MY SYSTEM!!<|eot_id|>
+    You are going to act as an LLM evaluator to rate the answer of the LLM generated medical chatbot on factualness (i.e how contextually the generated output followed the expected reply). Penalize it appropriately for any hallucination/loss of context, refraining to answer (saying 'As an AI Language Model', 'I am not a doctor, but' ...), or trailing repetition. YOUR RESPONSE IS NOTHING ELSE BUT A FLOAT FROM 0.0 - 5.0 (with format x.x). Where 0.0 indicates the context of the generated response is very far from the expected one. And 5.0 represents otherwise. AGAIN IF YOUR GENERATED ANYTHING ELSE BUT A FLOAT YOU'RE GOING TO CRUSH MY SYSTEM!!<|eot_id|>
     <|start_header_id|>user<|end_header_id|>
     ### Expected: {}
     ### Generated: {}<|eot_id|>

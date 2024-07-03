@@ -20,19 +20,20 @@ import inspect
 
 
 logg = lambda x: print(f"------------------------ {x} ---------------------------")
-ME = "/dpc/kunf0097/l3-8b"
+
 
 def inspectt(frame):
+    logg("")
     args, _, _, values = inspect.getargvalues(frame)
     for arg in args:
         print(f"\t{arg}: {values[arg]}")
-    logg("") 
+    logg("")
 
 
-def get_prompts_from_template(filepath, model_name):
+def get_prompts_from_template(filepath, name, eval_name):
     with open(filepath, "r") as f:
         data = yaml.safe_load(f)
-    return data[model_name]["chat_prompt"], data[model_name]["evaluation_prompt"]
+    return data[name]["chat_prompt"], data[eval_name]["evaluator_prompt"]
 
 
 def get_tokenizer_and_model(model_name: str, cache_dir: str):
@@ -80,7 +81,7 @@ def log2json(results, json_result):
 
 def main(
     output_dir=f"./out",
-    cache_dir=f"{ME}",
+    cache_dir=f"/dpc/kunf0097/l3-8b",
     eval_data_path="./data/1/eval_medical_2k.json",
     log_file=None,
     name="meta-llama/Meta-Llama-3-8B-Instruct",
@@ -108,7 +109,9 @@ def main(
     evals_per_example (int): No. of times the example to be evaluated. Default is 2.
     """
 
-    chat_prompt, evaluator_prompt = get_prompts_from_template("template.yaml", name)
+    chat_prompt, evaluator_prompt = get_prompts_from_template("template.yaml", name, eval_name)
+    print("chat_prompt: ", chat_prompt)
+    print("evaluator_prompt: ", evaluator_prompt)
 
     if log2wandb and (project is None or entity is None):
         raise ValueError("Both 'project' and 'entity' must be set if 'log2wandb' is True.")
@@ -177,7 +180,8 @@ def main(
         )
 
         llm_scores = []
-        for i in range(evals_per_example):
+        no_scores = []
+        for _ in range(evals_per_example):
             eval_output = evaluator_model.generate(
                 input_ids=torch.LongTensor(eval_prompt_tokenized["input_ids"]).to(
                     candidate_model.device
@@ -189,14 +193,27 @@ def main(
             )
 
             eval_response = eval_output[0][len(eval_prompt_tokenized["input_ids"][0]) :]
-            llm_score = evaluator_tokenizer.decode(eval_response, skip_special_tokens=True)
-            llm_scores.append(extract_score(llm_score))
+            generated_score = evaluator_tokenizer.decode(
+                eval_response, skip_special_tokens=True
+            )
+            score = extract_score(generated_score)
+            if score >= 0.0 and score <= 5.0:
+                llm_scores.append(score)
+            else:
+                no_scores.append(generated_score)
+
+            # maybe later use the running avg. score to replace the no_scores
+            if len(llm_scores) == 1:  # Duplicate the score
+                llm_scores.append(llm_scores[0])
+            elif len(llm_scores) == 0:
+                llm_scores = [0.0, 0.0]
 
         res = {
             "expected": gt_response,
             "generated": response,
             "llm_scores": llm_scores,
             "avg_llm_score": sum(llm_scores) / len(llm_scores),
+            "no_scores": no_scores,
         }
         results.append(res)
         log2json(results, log_file)
@@ -207,35 +224,38 @@ def main(
                 wandb_log[f"llm_score_{j}"] = score
             wandb.log(wandb_log)
 
+            # uploading every step instead of bulk so if it crashes only that step is lost
+            # Transpose to do PCC easier
+            results_t = list(zip(*[d["llm_scores"] for d in results]))
+            avg_llm_scores = [d["avg_llm_score"] for d in results]
+
+            pcc_results = {
+                f"pcc_{i}_{j}": pearsonr(results_t[i], results_t[j])[0]
+                for i in range(len(results_t))
+                for j in range(i + 1, len(results_t))
+            }  # Calculate PCC for each pair of LLM scores
+
+            avg_scores = {
+                f"avg_llm_score_{i}": sum(scores) / len(scores)
+                for i, scores in enumerate(results_t)
+            }  # Calculate average scores for each set of LLM scores
+
+            wandb.log(
+                {
+                    **avg_scores,
+                    **pcc_results,
+                    "run_score": sum(avg_llm_scores) / len(avg_llm_scores),
+                }
+            )  # Log the calculated data to wandb
+
+            wandb.finish()
+
         del example
+        del results_t
         gc.collect()
         gc.collect()
 
     if log2wandb:
-        results_t = list(
-            zip(*[d["llm_scores"] for d in results])
-        )  # Transpose to do PCC easier
-        avg_llm_scores = [d["avg_llm_score"] for d in results]
-
-        pcc_results = {
-            f"pcc_{i}_{j}": pearsonr(results_t[i], results_t[j])[0]
-            for i in range(len(results_t))
-            for j in range(i + 1, len(results_t))
-        }  # Calculate PCC for each pair of LLM scores
-
-        avg_scores = {
-            f"avg_llm_score_{i}": sum(scores) / len(scores)
-            for i, scores in enumerate(results_t)
-        }  # Calculate average scores for each set of LLM scores
-
-        wandb.log(
-            {
-                **avg_scores,
-                **pcc_results,
-                "run_score": sum(avg_llm_scores) / len(avg_llm_scores),
-            }
-        )  # Log the calculated data to wandb
-
         wandb.finish()
 
     end = time()
