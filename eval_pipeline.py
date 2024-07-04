@@ -31,9 +31,20 @@ def inspectt(frame):
 
 
 def get_prompts_from_template(filepath, name, eval_name):
+    default_config = {
+        "max_new_tokens": 256,
+        "do_sample": True,
+        "temperature": 0.6,
+        "top_p": 0.9,
+    }
     with open(filepath, "r") as f:
         data = yaml.safe_load(f)
-    return data[name]["chat_prompt"], data[eval_name]["evaluator_prompt"]
+    return (
+        data[name]["candidate_prompt"],
+        data[eval_name]["evaluator_prompt"],
+        data[name].get("candidate_generation_config", default_config),
+        data[eval_name].get("evaluator_generation_config", default_config),
+    )
 
 
 def get_tokenizer_and_model(model_name: str, cache_dir: str):
@@ -70,7 +81,7 @@ def eval_prompt_tokenizer(generated, output, eval_tokenizer, prompt=None):
 
 
 def extract_score(text):
-    match = re.search(r"\b\d+\.\d+\b", text)
+    match = re.search(r"\b\d+(\.\d+)?\b", text)
     return float(match.group(0)) if match else -1.0
 
 
@@ -84,8 +95,8 @@ def main(
     cache_dir=f"/dpc/kunf0097/l3-8b",
     eval_data_path="./data/1/eval_medical_2k.json",
     log_file=None,
-    name="meta-llama/Meta-Llama-3-8B-Instruct",
-    eval_name="meta-llama/Meta-Llama-3-8B-Instruct",
+    candidate_name="meta-llama/Meta-Llama-3-8B-Instruct",
+    evaluator_name="meta-llama/Meta-Llama-3-8B-Instruct",
     run_id=datetime.now().strftime("%y%m%d%H%M%S"),
     log2wandb: bool = True,
     project="huggingface",
@@ -100,8 +111,8 @@ def main(
     cache_dir (str): Directory to load/save tokenizer/model. Default is '/dpc/kunf0097/l3-8b'.
     eval_data_path (str): Path to the evaluation data. Default is './data/1/eval_medical_2k.json'.
     log_file (str): File to dump the outputs of the evaluator. Default is {output_dir}/results_{name.split('/')[1]}_{run_id}.json.
-    name (str): Model name for evaluation. Default is 'meta-llama/Meta-Llama-3-8B-Instruct'.
-    eval_name (str): Model name for the evaluator. Default is 'meta-llama/Meta-Llama-3-8B-Instruct'.
+    candidate_name (str): Model name for evaluation. Default is 'meta-llama/Meta-Llama-3-8B-Instruct'.
+    evaluator_name (str): Model name for the evaluator. Default is 'meta-llama/Meta-Llama-3-8B-Instruct'.
     run_id (str): Run ID. Default is current timestamp.
     log2wandb (bool): Whether to log to Weights & Biases. Default is True.
     project (str): WandB project name. Default is huggingface.
@@ -109,56 +120,52 @@ def main(
     evals_per_example (int): No. of times the example to be evaluated. Default is 2.
     """
 
-    chat_prompt, evaluator_prompt = get_prompts_from_template("template.yaml", name, eval_name)
-    print("chat_prompt: ", chat_prompt)
+    (
+        candidate_prompt,
+        evaluator_prompt,
+        candidate_generation_config,
+        evaluator_generation_config,
+    ) = get_prompts_from_template("template.yaml", candidate_name, evaluator_name)
+    print("candidate_prompt: ", candidate_prompt)
     print("evaluator_prompt: ", evaluator_prompt)
+    print("candidate_generation_config: ", evaluator_prompt)
+    print("evaluator_generation_config: ", evaluator_prompt)
 
     if log2wandb and (project is None or entity is None):
         raise ValueError("Both 'project' and 'entity' must be set if 'log2wandb' is True.")
 
     if log_file is None:
-        log_file = f"{output_dir}/results_{name.split('/')[1]}_{run_id}.json"
+        log_file = f"{output_dir}/results_{candidate_name.split('/')[1]}_{run_id}.json"
 
     inspectt(inspect.currentframe())
-    # import sys
-    # sys.exit()
 
     start = time()
-    # load_dotenv()
+    load_dotenv()
     HF_TOKEN_WRITE = os.getenv("HF_TOKEN_WRITE")
     huggingface_hub.login(token=HF_TOKEN_WRITE)
-
     torch.cuda.empty_cache()
-
     logg(run_id)
 
     evaluator_tokenizer, evaluator_model = get_tokenizer_and_model(
-        model_name=eval_name, cache_dir=cache_dir
+        model_name=evaluator_name, cache_dir=cache_dir
     )
 
     candidate_tokenizer, candidate_model = get_tokenizer_and_model(
-        model_name=name, cache_dir=cache_dir
+        model_name=candidate_name, cache_dir=cache_dir
     )
 
     data = load_dataset("json", data_files=eval_data_path)
     eval_dataset = data["train"].map(
-        lambda x: generate_and_tokenize_prompt(x, candidate_tokenizer, chat_prompt)
+        lambda x: generate_and_tokenize_prompt(x, candidate_tokenizer, candidate_prompt)
     )  # not shuffled
 
     if log2wandb:
-        wandb.init(project=project, entity=entity)
-
-    # generation config
-    generation_config = {
-        "max_new_tokens": 256,
-        "eos_token_id": [
-            candidate_tokenizer.eos_token_id,
-            candidate_tokenizer.convert_tokens_to_ids("<|eot_id|>"), # see what others use... and try to use
-        ],
-        "do_sample": True,
-        "temperature": 0.6,
-        "top_p": 0.9,
-    }
+        wandb.init(
+            project=project,
+            entity=entity,
+            name=f"laaj-{candidate_name.split('/')[1]}_{run_id}",
+        )
+        wandb.log({"Evaluation prompt": evaluator_prompt, "Evaluator": evaluator_name})
 
     results = []
     for i, example in tqdm(enumerate(eval_dataset)):
@@ -168,7 +175,8 @@ def main(
             attention_mask=torch.LongTensor(example["attention_mask"]).to(
                 candidate_model.device
             ),
-            **generation_config,
+            eos_token_id=candidate_tokenizer.eos_token_id,
+            **candidate_generation_config,
         )
 
         response_ids = outputs[0][len(example["input_ids"][0]) :]
@@ -189,7 +197,8 @@ def main(
                 attention_mask=torch.LongTensor(eval_prompt_tokenized["attention_mask"]).to(
                     candidate_model.device
                 ),
-                **generation_config,
+                eos_token_id=evaluator_tokenizer.eos_token_id,
+                **evaluator_generation_config,
             )
 
             eval_response = eval_output[0][len(eval_prompt_tokenized["input_ids"][0]) :]
@@ -200,66 +209,66 @@ def main(
             if score >= 0.0 and score <= 5.0:
                 llm_scores.append(score)
             else:
-                no_scores.append(generated_score)
-
-            # maybe later use the running avg. score to replace the no_scores
-            if len(llm_scores) == 1:  # Duplicate the score
-                llm_scores.append(llm_scores[0])
-            elif len(llm_scores) == 0:
-                llm_scores = [0.0, 0.0]
+                no_scores.append(generated_score)  # to see what evaluator generated
+                llm_scores.append(results[i - 1]["running/run_score"] if i > 0 else 0.0)
 
         res = {
             "expected": gt_response,
             "generated": response,
-            "llm_scores": llm_scores,
-            "avg_llm_score": sum(llm_scores) / len(llm_scores),
-            "no_scores": no_scores,
+            "scores": llm_scores,
+            "row_avg": sum(llm_scores) / len(llm_scores),
+            "no_scores": no_scores
         }
+
         results.append(res)
+
+        # Transpose to compute column wise results
+        scores_t = list(zip(*[d["scores"] for d in results]))
+        row_avg_t = [d["row_avg"] for d in results]
+
+        pcc_results = {
+            f"pcc_{i}_{j}": (
+                pearsonr(scores_t[i], scores_t[j])[0] if len(scores_t[i]) > 1 else 0
+            )
+            for i in range(len(scores_t))
+            for j in range(i + 1, len(scores_t))
+        }  # Calculate PCC for each pair of LLM scores
+
+        column_avg = {
+            f"avg_llm_score_{i}": sum(scores) / len(scores)
+            for i, scores in enumerate(scores_t)
+        }  # Calculate average scores for each set of LLM scores
+
+        run_score = sum(row_avg_t) / len(row_avg_t)
+
+        results[i] = {
+            **res,
+            "running/pcc": pcc_results,
+            "running/column_avg": column_avg,
+            "running/run_score": run_score,
+        }
+        del scores_t
+
+        print(res)
+
         log2json(results, log_file)
 
         if log2wandb:
-            wandb_log = {"index": i, "avg_llm_score": res["avg_llm_score"]}
-            for j, score in enumerate(llm_scores):
-                wandb_log[f"llm_score_{j}"] = score
-            wandb.log(wandb_log)
-
-            # uploading every step instead of bulk so if it crashes only that step is lost
-            # Transpose to do PCC easier
-            results_t = list(zip(*[d["llm_scores"] for d in results]))
-            avg_llm_scores = [d["avg_llm_score"] for d in results]
-
-            pcc_results = {
-                f"pcc_{i}_{j}": pearsonr(results_t[i], results_t[j])[0]
-                for i in range(len(results_t))
-                for j in range(i + 1, len(results_t))
-            }  # Calculate PCC for each pair of LLM scores
-
-            avg_scores = {
-                f"avg_llm_score_{i}": sum(scores) / len(scores)
-                for i, scores in enumerate(results_t)
-            }  # Calculate average scores for each set of LLM scores
-
-            wandb.log(
-                {
-                    **avg_scores,
-                    **pcc_results,
-                    "run_score": sum(avg_llm_scores) / len(avg_llm_scores),
-                }
-            )  # Log the calculated data to wandb
-
-            wandb.finish()
+            wandb.log(res)
 
         del example
-        del results_t
         gc.collect()
         gc.collect()
 
     if log2wandb:
+        table = wandb.Table(columns=list(results[0].keys()))
+        for r in results:
+            table.add_data(*r.values())
+        wandb.log({"Evaluation Results": table})
         wandb.finish()
 
     end = time()
-    logg(end - start)
+    logg(f"Elapsed: {end - start}")
 
 
 if __name__ == "__main__":

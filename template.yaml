@@ -5,7 +5,13 @@
 # evaluator_prompt should place the expected placeholder first and then the generated
 
 meta-llama/Meta-Llama-3-8B-Instruct: 
-  chat_prompt: <|start_header_id|>system<|end_header_id|> {}<|eot_id|><|start_header_id|>user<|end_header_id|> {}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+  candidate_prompt: <|start_header_id|>system<|end_header_id|> {}<|eot_id|><|start_header_id|>user<|end_header_id|> {}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+  candidate_generation_config: 
+    max_new_tokens: 256
+    do_sample: True
+    temperature: 0.6
+    top_p: 0.9
+  
   evaluator_prompt: |
     <|start_header_id|>system<|end_header_id|>
     You are going to act as an LLM evaluator to rate the answer of the LLM generated medical chatbot on factualness (i.e how contextually the generated output followed the expected reply). Penalize it appropriately for any hallucination/loss of context, refraining to answer (saying 'As an AI Language Model', 'I am not a doctor, but' ...), or trailing repetition. YOUR RESPONSE IS NOTHING ELSE BUT A FLOAT FROM 0.0 - 5.0 (with format x.x). Where 0.0 indicates the context of the generated response is very far from the expected one. And 5.0 represents otherwise. AGAIN IF YOUR GENERATED ANYTHING ELSE BUT A FLOAT YOU'RE GOING TO CRUSH MY SYSTEM!!<|eot_id|>
@@ -13,12 +19,28 @@ meta-llama/Meta-Llama-3-8B-Instruct:
     ### Expected: {}
     ### Generated: {}<|eot_id|>
     <|start_header_id|>assistant<|end_header_id|>
+  evaluator_generation_config: 
+    max_new_tokens: 256
+    do_sample: True
+    temperature: 0.6
+    top_p: 0.9
 
 microsoft/Phi-3-mini-4k-instruct:
-  chat_prompt: |
+  candidate_prompt: |
     <|system|>
     {}<|end|>
     <|user|>
     {}<|end|>
     <|assistant|>
   evaluator_prompt: 
+
+Qwen/Qwen2-7B-Instruct:
+  evaluator_prompt: |
+    <|im_start|>system
+    You are going to act as an LLM evaluator to rate the answer of the LLM generated medical chatbot on factualness (i.e how contextually the generated output followed the expected reply). Penalize it appropriately for any hallucination/loss of context, refraining to answer (saying 'As an AI Language Model', 'I am not a doctor, but' ...), or trailing repetition. YOUR RESPONSE IS NOTHING ELSE BUT A FLOAT FROM 0.0 - 5.0 (with format x.x). Where 0.0 indicates the context of the generated response is very far from the expected one. And 5.0 represents otherwise. AGAIN IF YOUR GENERATED ANYTHING ELSE BUT A FLOAT YOU'RE GOING TO CRUSH MY SYSTEM!!<|im_end|>
+    <|im_start|>user
+    ### Expected: {}
+    ### Generated: {}<|eot_id|><|im_end|>
+    <|im_start|>assistant
+    
+ 
