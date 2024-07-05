@@ -39,11 +39,24 @@ def get_prompts_from_template(filepath, name, eval_name):
     }
     with open(filepath, "r") as f:
         data = yaml.safe_load(f)
+
+    candidate_prompt = data[name]["candidate_prompt"]
+    evaluator_prompt = data[eval_name]["evaluator_prompt"]
+    candidate_generation_config = data[name].get("candidate_generation_config", default_config)
+    evaluator_generation_config = data[eval_name].get(
+        "evaluator_generation_config", default_config
+    )
+
+    print("candidate_prompt: ", candidate_prompt)
+    print("evaluator_prompt: ", evaluator_prompt)
+    print("candidate_generation_config: ", candidate_generation_config)
+    print("evaluator_generation_config: ", evaluator_generation_config)
+
     return (
-        data[name]["candidate_prompt"],
-        data[eval_name]["evaluator_prompt"],
-        data[name].get("candidate_generation_config", default_config),
-        data[eval_name].get("evaluator_generation_config", default_config),
+        candidate_prompt,
+        evaluator_prompt,
+        candidate_generation_config,
+        evaluator_generation_config,
     )
 
 
@@ -90,6 +103,25 @@ def log2json(results, json_result):
         json.dump(results, f, ensure_ascii=False, indent=4)
 
 
+def generate_response(model, tokenizer, input_ids, attention_mask, generation_config):
+    try:
+        output = model.generate(
+            input_ids=torch.LongTensor(input_ids).to(model.device),
+            attention_mask=torch.LongTensor(attention_mask).to(model.device),
+            eos_token_id=tokenizer.eos_token_id,
+            **generation_config,
+        )
+        response_ids = output[0][len(input_ids[0]) :]
+        response = tokenizer.decode(response_ids, skip_special_tokens=True)
+        return response
+    except RuntimeError as e:
+        if "inf" in str(e) or "nan" in str(e):
+            print(f"Skipping example due to invalid output: {e}")
+            return None
+        else:
+            raise 
+
+
 def main(
     output_dir=f"./out",
     cache_dir=f"/dpc/kunf0097/l3-8b",
@@ -120,17 +152,6 @@ def main(
     evals_per_example (int): No. of times the example to be evaluated. Default is 2.
     """
 
-    (
-        candidate_prompt,
-        evaluator_prompt,
-        candidate_generation_config,
-        evaluator_generation_config,
-    ) = get_prompts_from_template("template.yaml", candidate_name, evaluator_name)
-    print("candidate_prompt: ", candidate_prompt)
-    print("evaluator_prompt: ", evaluator_prompt)
-    print("candidate_generation_config: ", evaluator_prompt)
-    print("evaluator_generation_config: ", evaluator_prompt)
-
     if log2wandb and (project is None or entity is None):
         raise ValueError("Both 'project' and 'entity' must be set if 'log2wandb' is True.")
 
@@ -138,6 +159,13 @@ def main(
         log_file = f"{output_dir}/results_{candidate_name.split('/')[1]}_{run_id}.json"
 
     inspectt(inspect.currentframe())
+
+    (
+        candidate_prompt,
+        evaluator_prompt,
+        candidate_generation_config,
+        evaluator_generation_config,
+    ) = get_prompts_from_template("template.yaml", candidate_name, evaluator_name)
 
     start = time()
     load_dotenv()
@@ -170,19 +198,18 @@ def main(
     results = []
     for i, example in tqdm(enumerate(eval_dataset)):
         res = None
-        outputs = candidate_model.generate(
-            input_ids=torch.LongTensor(example["input_ids"]).to(candidate_model.device),
-            attention_mask=torch.LongTensor(example["attention_mask"]).to(
-                candidate_model.device
-            ),
-            eos_token_id=candidate_tokenizer.eos_token_id,
-            **candidate_generation_config,
+        response = generate_response(
+            candidate_model,
+            candidate_tokenizer,
+            example["input_ids"],
+            example["attention_mask"],
+            candidate_generation_config,
         )
 
-        response_ids = outputs[0][len(example["input_ids"][0]) :]
-        response = candidate_tokenizer.decode(response_ids, skip_special_tokens=True)
+        if response is None:
+            continue
+        
         gt_response = example["output"]  # groundtruth
-
         eval_prompt_tokenized = eval_prompt_tokenizer(
             response, gt_response, evaluator_tokenizer, prompt=evaluator_prompt
         )
@@ -190,21 +217,15 @@ def main(
         llm_scores = []
         no_scores = []
         for _ in range(evals_per_example):
-            eval_output = evaluator_model.generate(
-                input_ids=torch.LongTensor(eval_prompt_tokenized["input_ids"]).to(
-                    candidate_model.device
-                ),
-                attention_mask=torch.LongTensor(eval_prompt_tokenized["attention_mask"]).to(
-                    candidate_model.device
-                ),
-                eos_token_id=evaluator_tokenizer.eos_token_id,
-                **evaluator_generation_config,
+            generated_score = generate_response(
+                evaluator_model,
+                evaluator_tokenizer,
+                eval_prompt_tokenized["input_ids"],
+                eval_prompt_tokenized["attention_mask"],
+                evaluator_generation_config,
             )
-
-            eval_response = eval_output[0][len(eval_prompt_tokenized["input_ids"][0]) :]
-            generated_score = evaluator_tokenizer.decode(
-                eval_response, skip_special_tokens=True
-            )
+            if generated_score is None:
+                continue
             score = extract_score(generated_score)
             if score >= 0.0 and score <= 5.0:
                 llm_scores.append(score)
@@ -217,7 +238,7 @@ def main(
             "generated": response,
             "scores": llm_scores,
             "row_avg": sum(llm_scores) / len(llm_scores),
-            "no_scores": no_scores
+            "no_scores": no_scores,
         }
 
         results.append(res)
@@ -247,15 +268,12 @@ def main(
             "running/column_avg": column_avg,
             "running/run_score": run_score,
         }
-        del scores_t
-
-        print(res)
-
         log2json(results, log_file)
 
         if log2wandb:
-            wandb.log(res)
+            wandb.log(results[i])
 
+        del scores_t
         del example
         gc.collect()
         gc.collect()
